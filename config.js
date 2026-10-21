@@ -1,0 +1,4 @@
+window.VOICE_NOTES_CONFIG = {
+  GOOGLE_CLIENT_ID: '',
+  ENGINE_URL: '',
+};

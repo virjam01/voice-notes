@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Voice Notes">
+<meta name="theme-color" content="#0f6e8c">
+<meta name="robots" content="noindex, nofollow">
+<title>Voice Notes</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #16202a; --muted: #5f6b77; --line: #dde2e7;
+    --accent: #0f6e8c; --accent-ink: #ffffff; --warn-bg: #fff6e0; --warn-line: #e8b54a;
+    --info-bg: #eef3f7; --ok: #2e7d4f; --rec: #c0392b; --err-bg: #fdecea; --err-line: #f1b0aa; --err-ink: #8a1c14;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12171c; --card: #1b2229; --ink: #e8edf2; --muted: #9aa7b3; --line: #2c363f;
+      --accent: #4fb3d1; --accent-ink: #0c1a20; --warn-bg: #3a2f14; --warn-line: #a88531;
+      --info-bg: #1f2a33; --ok: #6fcf97; --rec: #ff7b6e; --err-bg: #3b1a17; --err-line: #7a2e27; --err-ink: #f6c4bf;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding-bottom: env(safe-area-inset-bottom); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 16px; padding-top: calc(10px + env(safe-area-inset-top)); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; white-space: nowrap; }
+  header h1 small { font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin-left: 4px; }
+  nav { display: flex; gap: 2px; overflow-x: auto; }
+  nav button { border: 0; background: none; color: var(--muted); padding: 8px 10px; border-radius: 8px; font-size: 15px; font-weight: 600; white-space: nowrap; position: relative; }
+  nav button.on { background: var(--info-bg); color: var(--ink); }
+  nav .badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--rec); color: #fff; font-size: 11px; line-height: 18px; margin-left: 4px; text-align: center; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-size: 14px; font-weight: 600; color: var(--muted); margin: 12px 0 6px; }
+  .hint { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  select, input[type=text], textarea { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  textarea { resize: vertical; }
+  #note, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; line-height: 1.5; background: var(--card); }
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; min-width: 0; }
+  button { font: inherit; cursor: pointer; }
+  .btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 12px 16px; font-weight: 600; width: 100%; margin-top: 12px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn:disabled { opacity: .5; }
+  .seg { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+  .seg button { flex: 1; border: 0; background: none; padding: 9px; border-radius: 8px; font-weight: 600; color: var(--muted); }
+  .seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .banner { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 16px; }
+  .error { background: var(--err-bg); border: 1px solid var(--err-line); color: var(--err-ink); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 16px; white-space: pre-wrap; }
+  .flag { border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 14px; }
+  .flag.warning { background: var(--warn-bg); border-left: 4px solid var(--warn-line); }
+  .flag.info { background: var(--info-bg); border-left: 4px solid var(--line); }
+  .meta { font-size: 13px; color: var(--muted); margin: 6px 0; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .head h2 { font-size: 17px; margin: 0; }
+  .pill { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 99px; background: var(--info-bg); color: var(--muted); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; border: 0; }
+  .pill.copied, .pill.sent { color: var(--accent); } .pill.logbooked, .pill.done { color: var(--ok); } .pill.new { color: var(--rec); }
+  .item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:last-child { border-bottom: 0; }
+  .item .t { font-weight: 600; } .item .s { font-size: 13px; color: var(--muted); }
+  .day { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 2px; }
+  .lb { display: grid; grid-template-columns: 38% 1fr; gap: 8px 10px; align-items: center; }
+  .lb .col { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+  .lb input:disabled { opacity: .55; }
+  details { margin-top: 12px; } summary { cursor: pointer; font-weight: 600; color: var(--muted); font-size: 14px; }
+  pre { white-space: pre-wrap; font-size: 14px; background: var(--bg); padding: 10px; border-radius: 8px; margin: 8px 0 0; }
+  img.preview { max-width: 100%; max-height: 180px; border-radius: 8px; margin-top: 8px; display: block; }
+  .hidden { display: none !important; }
+  .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+
+  .recorder { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0 4px; }
+  .recbtn { width: 112px; height: 112px; border-radius: 50%; border: 0; background: var(--rec); color: #fff; font-weight: 700; font-size: 16px; box-shadow: 0 4px 14px rgba(192,57,43,.35); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; -webkit-tap-highlight-color: transparent; }
+  .recbtn .dot { width: 26px; height: 26px; border-radius: 50%; background: #fff; }
+  .recbtn.on { animation: pulse 1.2s ease-in-out infinite; }
+  .recbtn.on .dot { border-radius: 5px; width: 24px; height: 24px; }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,.5); } 50% { box-shadow: 0 0 0 14px rgba(192,57,43,0); } }
+  .rectime { font-variant-numeric: tabular-nums; font-size: 15px; color: var(--muted); min-height: 22px; }
+  .linkbtn { background: none; border: 0; color: var(--accent); font-weight: 600; padding: 4px; font-size: 14px; }
+  .toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin-top: 10px; font-weight: 500; }
+  .toggle input { width: 18px; height: 18px; }
+
+  table.usage { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.usage th, table.usage td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.usage th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  table.usage td:first-child { overflow-wrap: anywhere; }
+  table.usage th:not(:first-child), table.usage td:not(:first-child) { text-align: right; white-space: nowrap; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; z-index: 25; padding: 16px; overflow-y: auto; }
+  .overlay .box { background: var(--card); border-radius: 12px; padding: 18px; max-width: 520px; width: 100%; margin: 24px 0; }
+  .overlay h2 { font-size: 19px; margin: 0 0 8px; }
+  .overlay ul { padding-left: 18px; margin: 8px 0; font-size: 14px; }
+  .overlay li { margin: 6px 0; }
+  #signin { text-align: center; padding: 40px 16px; }
+  #signin h2 { margin: 0 0 6px; }
+  #gsiBtn { display: flex; justify-content: center; margin: 20px 0; min-height: 44px; }
+  #footer { text-align: center; margin: 8px 0 24px; }
+  #footer a, #footer button { color: var(--accent); }
+  #toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; max-width: 90vw; text-align: center; }
+  #toast.show { opacity: 1; }
+  #busy { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 30; }
+  #busy .box { background: var(--card); padding: 18px 22px; border-radius: 12px; display: flex; gap: 12px; align-items: center; font-weight: 600; }
+  .spinner { width: 20px; height: 20px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #modal { z-index: 40; align-items: center; }
+  #modal p { margin: 0 0 8px; white-space: pre-wrap; font-size: 15px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Voice Notes<small>beta</small></h1>
+  <nav id="nav" class="hidden">
+    <button data-tab="new" class="on">New</button>
+    <button data-tab="cases">Cases</button>
+    <button data-tab="inbox" class="hidden" id="inboxNav">Inbox<span class="badge hidden" id="inboxBadge"></span></button>
+    <button data-tab="usage" class="hidden" id="usageNav">Usage</button>
+  </nav>
+</header>
+
+<main>
+  <div id="errorBox" class="error hidden"></div>
+
+  <section id="signin">
+    <h2>Voice Notes</h2>
+    <p class="meta">Dictate de-identified op notes and clinic notes by voice. Invite only.</p>
+    <div id="gsiBtn"></div>
+    <p class="meta" id="signinMsg"></p>
+  </section>
+
+  <section id="connect" class="hidden">
+    <div class="card">
+      <h2 style="margin:0 0 8px;font-size:17px">Connect your Google Drive</h2>
+      <p class="meta">Voice Notes keeps your cases, templates and examples in a spreadsheet in <b>your own</b> Google Drive. It can only see files it creates itself.</p>
+      <button class="btn primary" id="connectBtn" type="button">Connect Drive</button>
+    </div>
+  </section>
+
+  <div id="app" class="hidden">
+    <div id="banner" class="banner hidden"></div>
+
+    <section id="tab-new">
+      <div class="card" id="form">
+        <div class="seg" id="typeSeg">
+          <button data-type="op" class="on" type="button">Op note</button>
+          <button data-type="clinic" type="button">Clinic note</button>
+        </div>
+
+        <label for="template">Template</label>
+        <select id="template"></select>
+
+        <div class="row">
+          <div id="sideWrap">
+            <label for="side">Side</label>
+            <select id="side"><option value="">Select</option><option>Left</option><option>Right</option><option>Bilateral</option></select>
+          </div>
+          <div>
+            <label for="caseTag">Case tag</label>
+            <input type="text" id="caseTag" autocomplete="off">
+          </div>
+        </div>
+
+        <label for="personalRef">Personal reference (optional)
+          <span class="hint">Your own case number. Never a UR number, name or date of birth. Not sent anywhere.</span>
+        </label>
+        <input type="text" id="personalRef" autocomplete="off">
+
+        <label>Voice memo
+          <span class="hint">Tap to record, tap again to stop. Say only clinical content: no names, UR numbers or dates of birth.</span>
+        </label>
+        <div class="recorder">
+          <button class="recbtn" id="recBtn" type="button" aria-label="Start recording"><span class="dot"></span><span id="recLabel">Record</span></button>
+          <div class="rectime" id="recTime"></div>
+          <button class="linkbtn" id="uploadBtn" type="button">or upload a memo</button>
+          <input type="file" id="memoFile" accept="audio/*,.m4a,.mp3,.wav,.webm" class="hidden">
+        </div>
+        <label class="toggle"><input type="checkbox" id="autoGen" checked> Write the note as soon as the memo is transcribed</label>
+
+        <label for="transcript">Dictation
+          <span class="hint">Your memo's transcript appears here. You can also type, or use keyboard dictation.</span>
+        </label>
+        <textarea id="transcript" rows="6" placeholder="e.g. Left THA for OA. Standard posterior approach. Exeter 44 size 2, Trinity 54 cup, 32 head. Stable, leg lengths equal. Standard closure. WBAT, review 6 weeks."></textarea>
+
+        <div id="photoWrap">
+          <label for="photo">Implant sticker photo (optional)
+            <span class="hint">Photograph the stickers only, never the patient label.</span>
+          </label>
+          <input type="file" id="photo" accept="image/*">
+          <img id="photoPreview" class="preview hidden" alt="Sticker photo preview">
+          <button class="btn hidden" id="clearPhoto" type="button">Remove photo</button>
+        </div>
+
+        <button class="btn primary" id="generate" type="button">Write note</button>
+      </div>
+    </section>
+
+    <section id="tab-cases" class="hidden">
+      <div class="card">
+        <div class="head"><h2>Recent cases</h2><button class="pill" id="refreshCases" type="button">Refresh</button></div>
+        <div id="caseList"><div class="empty">Loading…</div></div>
+      </div>
+    </section>
+
+    <section id="tab-inbox" class="hidden">
+      <div class="card">
+        <div class="head"><h2>Sent to you for Sunrise</h2><button class="pill" id="refreshInbox" type="button">Refresh</button></div>
+        <p class="meta">Notes colleagues have sent you. Each one is cleared after 14 days.</p>
+        <div id="inboxList"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="card hidden" id="inboxItem">
+        <div class="head"><h2 id="inboxTitle"></h2><span id="inboxStatus" class="pill"></span></div>
+        <div class="meta" id="inboxMeta"></div>
+        <textarea id="inboxNote" class="mono" rows="16"></textarea>
+        <button class="btn primary" id="inboxCopy" type="button">Copy for Sunrise</button>
+        <button class="btn" id="inboxDone" type="button">Mark as entered</button>
+      </div>
+    </section>
+
+    <section id="tab-usage" class="hidden">
+      <div class="card">
+        <div class="head"><h2>Usage this month</h2><button class="pill" id="refreshUsage" type="button">Refresh</button></div>
+        <div id="usageBox"><div class="empty">Loading…</div></div>
+        <div class="meta" id="usageMeta"></div>
+      </div>
+    </section>
+
+    <section id="result" class="hidden">
+      <div class="card">
+        <div class="head"><h2 id="resTitle"></h2><span id="resStatus" class="pill"></span></div>
+        <div class="meta" id="resMeta"></div>
+        <div id="flags"></div>
+        <div id="todo" class="flag warning hidden"></div>
+
+        <label for="note">Note <span class="hint">Edit freely. Changes save when you leave the box.</span></label>
+        <textarea id="note" rows="18"></textarea>
+        <button class="btn primary" id="copy" type="button">Copy for Sunrise</button>
+        <button class="btn hidden" id="sendOwner" type="button">Send to James for Sunrise</button>
+        <button class="btn" id="teach" type="button">Teach Claude from this note</button>
+        <div class="meta">Once the note reads exactly how you want it, save it as an example. Future notes of this type will follow its style.</div>
+
+        <label for="amend">Amend <span class="hint">Type or dictate a change, e.g. "change to PWB for 6 weeks, add drain out day 1".</span></label>
+        <textarea id="amend" rows="2"></textarea>
+        <button class="btn" id="amendBtn" type="button">Apply amendment</button>
+
+        <details>
+          <summary>Dictation transcript</summary>
+          <pre id="transcriptView"></pre>
+        </details>
+      </div>
+
+      <div class="card hidden" id="logbookCard">
+        <div class="head"><h2>Logbook entry</h2></div>
+        <div class="meta">Check each field, then add. It goes to the Logbook tab of your Voice Notes spreadsheet, in your logbook's column order, ready to copy across.</div>
+        <div class="lb" id="logbookFields"></div>
+        <button class="btn primary" id="addLogbook" type="button">Add to logbook</button>
+      </div>
+
+      <button class="btn" id="startNew" type="button">Start a new note</button>
+    </section>
+  </div>
+
+  <div class="meta" id="footer"></div>
+</main>
+
+<div id="welcome" class="overlay hidden"><div class="box">
+  <h2>Welcome to Voice Notes</h2>
+  <p class="meta" id="welcomeLead">Before you start:</p>
+  <ul>
+    <li><b>Dictate de-identified content only.</b> No names, UR numbers, dates of birth or addresses. Add identifiers in Sunrise.</li>
+    <li><b>Record your own dictation after you've seen the patient.</b> Never record a consultation or anyone else's voice.</li>
+    <li><b>You review and sign every note.</b> Claude drafts it; you are responsible for what goes into the record.</li>
+    <li><b>This is a personal tool, not an SA Health product</b>, and it is not hospital-approved.</li>
+    <li>Your cases, templates and examples stay in a spreadsheet in <b>your own</b> Google Drive. Memos are transcribed by OpenAI and notes written by Claude through James's accounts; neither keeps a copy for training.</li>
+  </ul>
+  <label for="wName">Your name for the sign-off</label>
+  <input type="text" id="wName" placeholder="e.g. Dr Jane Smith" autocomplete="name">
+  <label for="wRole">Your role</label>
+  <input type="text" id="wRole" placeholder="e.g. Orthopaedic Surgeon">
+  <button class="btn primary" id="wSave" type="button">I understand, start</button>
+</div></div>
+
+<div id="modal" class="overlay hidden"><div class="box">
+  <p id="modalText"></p>
+  <div class="row"><button class="btn" id="modalCancel" type="button">Cancel</button><button class="btn primary" id="modalOk" type="button">Continue</button></div>
+</div></div>
+<div id="toast"></div>
+<div id="busy" class="hidden"><div class="box"><div class="spinner"></div><span id="busyText">Working…</span></div></div>
+
+<script src="config.js"></script>
+<script src="templates.js"></script>
+<script src="app.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer onload="window.__gsiReady && window.__gsiReady()"></script>
+</body>
+</html>
