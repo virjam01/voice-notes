@@ -29,6 +29,8 @@
       'House format for EVERY operation note. ## marks a field to fill; [brackets] are instructions to Claude.'],
     ['CLINIC_NOTE_FORMAT', 'Orthopaedic Clinic – ##Your surname## for ##Consultant## (##Present/Reg only##)\n\n##Patient demographics##\n##Presenting issue##\n\nHistory:\n####\n\nExamination:\n####\n\nImaging:\n####\n\nImpression:\n####\n\nPlan:\n####\n\n##Your name##\n##Your role##',
       'House format for EVERY clinic note. ##Patient demographics## is never filled by the app.'],
+    ['ADMISSION_NOTE_FORMAT', 'Orthopaedic Admission \u2013 ##Consultant##\n\n##Patient demographics##\n\nPC: ####\nHPC:\n####\n\nPMHx:\n####\nMeds: ####\nAllergies: ####\nSHx / function:\n####\n\nO/E:\n####\n\nImaging:\n####\n\nImpression:\n####\n\nPlan:\n####\n\n##Your name##\n##Your role##',
+      'House format for EVERY admission note. ##Patient demographics## is never filled by the app.'],
     ['NOTE_RULES', 'Written in shorthand.\nHashtags (##like this##) mark fields that need editing or filling.\nLeave the hashtags in place where a field is not completed.\nLearn from previous notes (the saved examples).', 'Style rules for every note, one per line.'],
     ['VOCABULARY', 'Exeter, Trinity, Corail, Pinnacle, Triathlon, Attune, Persona, Gamma3, TFNA, DHS, LCP, syndesmosis, Weber, Garden, posterior approach, medial parapatellar, tranexamic acid, cefazolin, Vicryl, Monocryl',
       'Implant systems, approaches and terms. Helps both transcription and note writing. Comma separated.'],
@@ -39,13 +41,19 @@
     ['LOGBOOK_REF_COLUMN', 'Patient ID', 'Logbook column that receives your personal reference. Edit the Logbook tab row 1 to match your own logbook columns.'],
     ['SIGN_OFF_NAME', '', 'Set on first use.'],
     ['SIGN_OFF_ROLE', '', 'Set on first use.'],
+    ['STARTER_SET', '2', 'Used by the app to add new starter templates once. Leave as is.'],
   ];
+  const FORMAT_KEYS = { op: 'OP_NOTE_FORMAT', clinic: 'CLINIC_NOTE_FORMAT', admission: 'ADMISSION_NOTE_FORMAT' };
+  const TYPE_LABEL = { op: 'op', clinic: 'clinic', admission: 'admission' };
+  const FREE_ID = '__free';
+  const FREE_SECTIONS = 'Free note: no fixed template and no required items. Organise the dictation under short headings that suit its content, in a sensible clinical order. Use only headings the dictation gives content for.';
+  const normType = t => { t = String(t || '').toLowerCase(); return t === 'clinic' || t === 'admission' ? t : 'op'; };
 
   const $ = s => document.querySelector(s);
   const state = {
     idToken: null, idExp: 0, email: '', boot: null,
     driveToken: null, driveExp: 0, tokenClient: null, driveWaiters: [], idWaiters: [],
-    ssId: null, templates: [], settings: {}, settingRows: [], examples: [], cases: [], logbookHeaders: LOGBOOK_HEADERS.slice(),
+    ssId: null, casesSheetId: null, templates: [], allTemplates: [], tplType: 'op', tplEditing: null, settings: {}, settingRows: [], examples: [], cases: [], logbookHeaders: LOGBOOK_HEADERS.slice(),
     type: 'op', image: null, current: null, inbox: [], inboxCurrent: null, started: false,
   };
 
@@ -229,14 +237,16 @@
   async function api(action, payload) {
     await ensureIdToken();
     let r;
-    try {
-      r = await fetch(CFG.ENGINE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({ action: action, idToken: state.idToken }, payload)),
-      });
-    } catch (e) {
-      throw new Error('Could not reach the Voice Notes engine. Check your connection and try again.');
+    const body = JSON.stringify(Object.assign({ action: action, idToken: state.idToken }, payload));
+    const tries = action === 'send' || action === 'inboxDelete' ? 1 : 2;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        r = await fetch(CFG.ENGINE_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body });
+        break;
+      } catch (e) {
+        if (attempt >= tries) throw new Error('Could not reach the Voice Notes engine. Check your signal or Wi-Fi and try again. Nothing has been lost.');
+        await new Promise(res => setTimeout(res, 2000));
+      }
     }
     let j;
     try { j = await r.json(); } catch (e) { throw new Error('The engine sent an unexpected reply (' + r.status + ').'); }
@@ -312,10 +322,18 @@
       const ranges = ['Templates!A2:G', 'Settings!A2:C', 'Examples!A2:F', 'Cases!A2:' + CASE_LAST_COL, 'Logbook!1:1'];
       const res = await g('GET', SHEETS + '/' + state.ssId + '/values:batchGet?' + ranges.map(r => 'ranges=' + enc(r)).join('&') + '&valueRenderOption=UNFORMATTED_VALUE');
       const vr = res.valueRanges.map(v => v.values || []);
-      state.templates = vr[0].map(r => rowObj(TEMPLATE_HEADERS, r)).filter(t => t.id && t.name && String(t.active).toLowerCase() !== 'no')
-        .map(t => Object.assign(t, { noteType: String(t.noteType).toLowerCase() === 'clinic' ? 'clinic' : 'op' }));
+      state.allTemplates = vr[0].map(r => rowObj(TEMPLATE_HEADERS, r)).filter(t => t.id && t.name)
+        .map(t => Object.assign(t, { noteType: normType(t.noteType) }));
       state.settingRows = vr[1].map(r => [String(r[0] || ''), String(r[1] == null ? '' : r[1]), String(r[2] || '')]);
+      const needStarters = !state.settingRows.some(r => r[0] === 'STARTER_SET');
       await ensureSettingRows();
+      if (needStarters) await addMissingStarters();
+      refreshActiveTemplates();
+      if (state.casesSheetId == null) {
+        const meta = await g('GET', SHEETS + '/' + state.ssId + '?fields=' + enc('sheets.properties(sheetId,title)'));
+        const cs = (meta.sheets || []).find(x => x.properties.title === 'Cases');
+        state.casesSheetId = cs ? cs.properties.sheetId : null;
+      }
       state.settings = {};
       state.settingRows.forEach(r => { if (r[0]) state.settings[r[0].trim()] = r[1]; });
       state.examples = vr[2].map(r => rowObj(EXAMPLE_HEADERS, r)).filter(e => e.note);
@@ -348,7 +366,13 @@
 
   async function ensureSettingRows() {
     const have = state.settingRows.map(r => r[0]);
-    const missing = DEFAULT_SETTINGS.filter(s => have.indexOf(s[0]) === -1);
+    const signName = (state.settingRows.find(r => r[0] === 'SIGN_OFF_NAME') || [])[1];
+    const signRole = (state.settingRows.find(r => r[0] === 'SIGN_OFF_ROLE') || [])[1];
+    const missing = DEFAULT_SETTINGS.filter(s => have.indexOf(s[0]) === -1).map(s => {
+      if (!/_NOTE_FORMAT$/.test(s[0]) || !signName) return s.slice();
+      state.settings.SIGN_OFF_NAME = signName; state.settings.SIGN_OFF_ROLE = signRole || '';
+      return [s[0], personalise(s[1]), s[2]];
+    });
     if (!missing.length) return;
     await g('POST', valuesUrl('Settings!A1') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', { values: missing });
     state.settingRows = state.settingRows.concat(missing.map(s => s.slice()));
@@ -362,6 +386,35 @@
   function setSetting(key, value) {
     const row = state.settingRows.find(r => r[0] === key);
     if (row) row[1] = value; else state.settingRows.push([key, value, '']);
+  }
+
+  function refreshActiveTemplates() {
+    state.templates = state.allTemplates.filter(t => String(t.active).toLowerCase() !== 'no');
+  }
+
+  async function addMissingStarters() {
+    const have = new Set(state.allTemplates.map(t => t.id));
+    const missing = STARTER_TEMPLATES.filter(t => !have.has(t.id)).map(t => Object.assign({}, t, { noteType: normType(t.noteType) }));
+    if (!missing.length) return;
+    await g('POST', valuesUrl('Templates!A1') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', { values: missing.map(t => TEMPLATE_HEADERS.map(h => t[h] || '')) });
+    state.allTemplates = state.allTemplates.concat(missing);
+  }
+
+  async function writeAllTemplates() {
+    await g('POST', valuesUrl('Templates!A2:G') + ':clear', {});
+    if (state.allTemplates.length) {
+      await g('PUT', valuesUrl('Templates!A2:G' + (state.allTemplates.length + 1)) + '?valueInputOption=RAW', { values: state.allTemplates.map(t => TEMPLATE_HEADERS.map(h => String(t[h] == null ? '' : t[h]))) });
+    }
+    refreshActiveTemplates();
+  }
+
+  function personalise(text) {
+    const name = state.settings.SIGN_OFF_NAME || '';
+    if (!name) return text;
+    const role = state.settings.SIGN_OFF_ROLE || '';
+    const surname = name.replace(/^(dr|mr|mrs|ms|miss|prof|professor|a\/prof)\.?\s+/i, '').split(/\s+/).pop();
+    let v = String(text).split('##Your name##').join(name).split('##Your surname##').join(surname);
+    return role ? v.split('##Your role##').join(role) : v.split('\n##Your role##').join('');
   }
 
   async function purgeOldCases() {
@@ -443,7 +496,7 @@
     }
     const warn = [];
     if (!state.boot.hasOpenAi) warn.push('Voice transcription is not switched on yet: type, or use keyboard dictation, for now.');
-    if (String(state.settings.TEMPLATES_REVIEWED || '').toLowerCase() !== 'yes') warn.push('Templates still hold generic starter defaults. Edit them in your Voice Notes spreadsheet (Templates tab), then set TEMPLATES_REVIEWED to yes in Settings.');
+    if (String(state.settings.TEMPLATES_REVIEWED || '').toLowerCase() !== 'yes') warn.push('Templates still hold generic starter defaults. Review them in the Templates tab, then tap "I\'ve reviewed my templates".');
     const b = $('#banner');
     b.innerHTML = '';
     warn.forEach(w => b.appendChild(el('div', {}, w)));
@@ -493,7 +546,7 @@
     const surname = name.replace(/^(dr|mr|mrs|ms|miss|prof|professor|a\/prof)\.?\s+/i, '').split(/\s+/).pop();
     busy(true, 'Saving…');
     try {
-      ['OP_NOTE_FORMAT', 'CLINIC_NOTE_FORMAT'].forEach(k => {
+      ['OP_NOTE_FORMAT', 'CLINIC_NOTE_FORMAT', 'ADMISSION_NOTE_FORMAT'].forEach(k => {
         let v = String(state.settings[k] || '').split('##Your name##').join(name).split('##Your surname##').join(surname);
         v = role ? v.split('##Your role##').join(role) : v.split('\n##Your role##').join('');
         setSetting(k, v);
@@ -516,13 +569,14 @@
 
   function showTab(tab) {
     document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-    ['new', 'cases', 'inbox', 'usage'].forEach(t => $('#tab-' + t).classList.toggle('hidden', tab !== t));
+    ['new', 'cases', 'templates', 'inbox', 'usage'].forEach(t => $('#tab-' + t).classList.toggle('hidden', tab !== t));
     if (tab === 'new') {
       if (state.current) $('#result').classList.remove('hidden');
       return;
     }
     $('#result').classList.add('hidden');
     if (tab === 'cases') loadCases(true);
+    if (tab === 'templates') renderTemplatesTab();
     if (tab === 'inbox') loadInbox();
     if (tab === 'usage') loadUsage();
   }
@@ -532,12 +586,13 @@
   function setType(type, keepTag) {
     state.type = type;
     document.querySelectorAll('#typeSeg button').forEach(b => b.classList.toggle('on', b.dataset.type === type));
-    $('#sideWrap').classList.toggle('hidden', type !== 'op');
+    $('#sideWrap').classList.toggle('hidden', type === 'clinic');
     $('#photoWrap').classList.toggle('hidden', type !== 'op');
     const sel = $('#template');
     const prev = sel.value;
     sel.innerHTML = '';
     state.templates.filter(t => t.noteType === type).forEach(t => sel.appendChild(el('option', { value: t.id }, t.name)));
+    sel.appendChild(el('option', { value: FREE_ID }, 'Free note (no template)'));
     if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
     if (!keepTag) $('#caseTag').value = defaultTag(type);
   }
@@ -545,7 +600,7 @@
   function defaultTag(type) {
     const today = new Date().toDateString();
     const n = state.cases.filter(c => c.noteType === type && new Date(c.created).toDateString() === today).length + 1;
-    return new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' – ' + (type === 'op' ? 'case ' : 'clinic ') + n;
+    return new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' \u2013 ' + (type === 'op' ? 'case ' : type === 'admission' ? 'admission ' : 'clinic ') + n;
   }
 
   function resetForm() {
@@ -706,12 +761,22 @@
 
   /* ================================================================ write a note */
 
-  function currentTemplate() {
-    return state.templates.find(t => t.id === $('#template').value) || state.templates.find(t => t.noteType === state.type);
+  function freeTemplate(type) {
+    return { id: 'free-' + type, name: 'Free ' + TYPE_LABEL[type] + ' note', noteType: type, sections: FREE_SECTIONS, defaults: '', checks: '', free: true };
   }
-  function settingsForEngine() {
+  function templateById(id, type) {
+    if (id === FREE_ID || /^free-/.test(id || '')) return freeTemplate(normType(type));
+    return state.allTemplates.find(t => t.id === id);
+  }
+  function currentTemplate() {
+    if ($('#template').value === FREE_ID) return freeTemplate(state.type);
+    return state.templates.find(t => t.id === $('#template').value) || state.templates.find(t => t.noteType === state.type) || freeTemplate(state.type);
+  }
+  function settingsForEngine(free) {
     const s = state.settings;
-    return { OP_NOTE_FORMAT: s.OP_NOTE_FORMAT, CLINIC_NOTE_FORMAT: s.CLINIC_NOTE_FORMAT, NOTE_RULES: s.NOTE_RULES, VOCABULARY: s.VOCABULARY, STYLE_EXAMPLES: s.STYLE_EXAMPLES };
+    const out = { NOTE_RULES: s.NOTE_RULES, VOCABULARY: s.VOCABULARY, STYLE_EXAMPLES: s.STYLE_EXAMPLES };
+    Object.values(FORMAT_KEYS).forEach(k => { out[k] = free ? '' : s[k]; });
+    return out;
   }
   function examplesFor(noteType, templateId) {
     const n = Number(state.settings.EXAMPLES_PER_NOTE) || 3;
@@ -730,8 +795,7 @@
     const transcript = $('#transcript').value.trim();
     if (!transcript && !state.image) return toast('Record or type your dictation first');
     const tpl = currentTemplate();
-    if (!tpl) return showError(new Error('No templates found. Check the Templates tab of your Voice Notes spreadsheet.'));
-    if (state.type === 'op' && !$('#side').value && !(await ask('No side selected. Continue anyway?'))) return;
+    if (state.type === 'op' && !tpl.free && !$('#side').value && !(await ask('No side selected. Continue anyway?'))) return;
     let override = false;
     const matches = findIdentifiers(transcript);
     if (matches.length) {
@@ -741,9 +805,9 @@
     const payload = {
       noteType: tpl.noteType,
       template: { id: tpl.id, name: tpl.name, sections: tpl.sections, defaults: tpl.defaults, checks: tpl.checks },
-      settings: settingsForEngine(),
+      settings: settingsForEngine(tpl.free),
       examples: examplesFor(tpl.noteType, tpl.id),
-      side: tpl.noteType === 'op' ? $('#side').value : '',
+      side: tpl.noteType === 'clinic' ? '' : $('#side').value,
       transcript: transcript,
       image: tpl.noteType === 'op' ? state.image : null,
       logbookColumns: tpl.noteType === 'op' ? logbookColumnsForEngine() : [],
@@ -779,7 +843,8 @@
     clearError();
     state.current = c;
     $('#form').classList.add('hidden');
-    ['cases', 'inbox', 'usage'].forEach(t => $('#tab-' + t).classList.add('hidden'));
+    ['cases', 'templates', 'inbox', 'usage'].forEach(t => $('#tab-' + t).classList.add('hidden'));
+    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === 'new'));
     $('#tab-new').classList.remove('hidden');
     $('#result').classList.remove('hidden');
     $('#resTitle').textContent = c.caseTag || c.templateName;
@@ -930,7 +995,7 @@
         await g('POST', valuesUrl('Examples!A1') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', { values: [EXAMPLE_HEADERS.map(h => ex[h])] });
       }
       busy(false);
-      toast('Saved. Future ' + (c.noteType === 'clinic' ? 'clinic' : 'op') + ' notes will learn from it');
+      toast('Saved. Future ' + TYPE_LABEL[normType(c.noteType)] + ' notes will learn from it');
     } catch (err) { showError(err); }
   });
 
@@ -946,12 +1011,12 @@
       if (!(await confirmIdentifiers(matches))) return;
       override = true;
     }
-    const tpl = state.templates.find(t => t.id === c.templateId) || { id: c.templateId, name: c.templateName, sections: '', defaults: '', checks: '' };
+    const tpl = templateById(c.templateId, c.noteType) || { id: c.templateId, name: c.templateName, sections: '', defaults: '', checks: '' };
     busy(true, 'Applying amendment…');
     try {
       const res = await api('amend', {
         noteType: c.noteType, template: { id: tpl.id, name: tpl.name, sections: tpl.sections, defaults: tpl.defaults, checks: tpl.checks },
-        settings: settingsForEngine(), examples: examplesFor(c.noteType, c.templateId), transcript: c.transcript,
+        settings: settingsForEngine(!!tpl.free), examples: examplesFor(c.noteType, c.templateId), transcript: c.transcript,
         note: $('#note').value, logbook: c.logbook, logbookColumns: c.noteType === 'op' ? logbookColumnsForEngine() : [], instruction: instruction, override: override,
       });
       if (res && res.blocked) { busy(false); return toast('Amendment not sent'); }
@@ -992,6 +1057,152 @@
   });
 
   $('#startNew').addEventListener('click', () => { showTab('new'); resetForm(); });
+
+  $('#deleteCase').addEventListener('click', async () => {
+    primeDrive();
+    const c = state.current;
+    if (!c) return;
+    if (!(await ask('Delete this note from your Voice Notes? This can\'t be undone.' + (c.sentAt ? '\n\nThe copy already sent to ' + ownerFirst() + ' is not affected.' : ''), 'Delete'))) return;
+    busy(true, 'Deleting…');
+    try {
+      await deleteCaseRow(c);
+      state.cases = state.cases.filter(x => x.id !== c.id);
+      busy(false);
+      resetForm();
+      toast('Note deleted');
+    } catch (err) { showError(err); }
+  });
+
+  async function deleteCaseRow(c) {
+    const all = await g('GET', valuesUrl('Cases!A2:A'));
+    const idx = (all.values || []).findIndex(r => r[0] === c.id);
+    if (idx === -1) return;
+    if (state.casesSheetId == null) throw new Error('Could not find the Cases tab in your spreadsheet.');
+    await g('POST', SHEETS + '/' + state.ssId + ':batchUpdate', { requests: [{ deleteDimension: { range: { sheetId: state.casesSheetId, dimension: 'ROWS', startIndex: idx + 1, endIndex: idx + 2 } } }] });
+    state.cases.forEach(x => { if (x.rowNum > idx + 2) x.rowNum -= 1; });
+  }
+
+  /* ================================================================ templates tab */
+
+  document.querySelectorAll('#tplSeg button').forEach(b => b.addEventListener('click', () => { state.tplType = b.dataset.type; state.tplEditing = null; renderTemplatesTab(); }));
+
+  function renderTemplatesTab() {
+    document.querySelectorAll('#tplSeg button').forEach(b => b.classList.toggle('on', b.dataset.type === state.tplType));
+    const box = $('#tplList');
+    box.innerHTML = '';
+    const list = state.allTemplates.filter(t => t.noteType === state.tplType);
+    if (!list.length) box.appendChild(el('div', { class: 'empty' }, 'No templates of this type yet. Tap + New.'));
+    list.forEach(t => {
+      const hidden = String(t.active).toLowerCase() === 'no';
+      const row = el('div', { class: 'item' });
+      const left = el('div');
+      left.appendChild(el('div', { class: 't' }, t.name));
+      const nChecks = String(t.checks || '').split(';').filter(x => x.trim()).length;
+      left.appendChild(el('div', { class: 's' }, (t.defaults ? 'Has defaults' : 'No defaults') + ' · ' + nChecks + (nChecks === 1 ? ' check' : ' checks')));
+      row.appendChild(left);
+      row.appendChild(el('span', { class: 'pill' + (hidden ? '' : ' done') }, hidden ? 'hidden' : 'shown'));
+      row.addEventListener('click', () => openTemplate(t));
+      box.appendChild(row);
+    });
+    $('#reviewedWrap').classList.toggle('hidden', String(state.settings.TEMPLATES_REVIEWED || '').toLowerCase() === 'yes');
+    $('#fOp').value = state.settings.OP_NOTE_FORMAT || '';
+    $('#fClinic').value = state.settings.CLINIC_NOTE_FORMAT || '';
+    $('#fAdmission').value = state.settings.ADMISSION_NOTE_FORMAT || '';
+    $('#fRules').value = state.settings.NOTE_RULES || '';
+    $('#fVocab').value = state.settings.VOCABULARY || '';
+    if (!state.tplEditing) $('#tplEditor').classList.add('hidden');
+  }
+
+  function openTemplate(t) {
+    state.tplEditing = t || { id: '', name: '', noteType: state.tplType, sections: '', defaults: '', checks: '', active: 'yes' };
+    const e = state.tplEditing;
+    $('#tplEdTitle').textContent = e.id ? 'Edit template' : 'New template';
+    $('#tName').value = e.name;
+    $('#tType').value = e.noteType;
+    $('#tSections').value = e.sections;
+    $('#tDefaults').value = e.defaults;
+    $('#tChecks').value = e.checks;
+    $('#tActive').checked = String(e.active).toLowerCase() !== 'no';
+    $('#tDelete').classList.toggle('hidden', !e.id);
+    $('#tplEditor').classList.remove('hidden');
+    $('#tplEditor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  $('#newTemplate').addEventListener('click', () => { primeDrive(); openTemplate(null); });
+  $('#tCancel').addEventListener('click', () => { state.tplEditing = null; $('#tplEditor').classList.add('hidden'); });
+
+  $('#tSave').addEventListener('click', async () => {
+    primeDrive();
+    const e = state.tplEditing;
+    if (!e) return;
+    const name = $('#tName').value.trim();
+    if (!name) return toast('Give the template a name');
+    const updated = {
+      id: e.id || ('t-' + uuid().slice(0, 8)), name: name, noteType: normType($('#tType').value), sections: $('#tSections').value.trim(),
+      defaults: $('#tDefaults').value.trim(), checks: $('#tChecks').value.trim(), active: $('#tActive').checked ? 'yes' : 'no',
+    };
+    const matches = findIdentifiers([updated.name, updated.sections, updated.defaults, updated.checks].join('\n'));
+    if (matches.length && !(await confirmIdentifiers(matches))) return;
+    busy(true, 'Saving template…');
+    try {
+      const i = state.allTemplates.findIndex(t => t.id === e.id);
+      if (i === -1) state.allTemplates.push(updated); else state.allTemplates[i] = updated;
+      await writeAllTemplates();
+      state.tplEditing = null;
+      state.tplType = updated.noteType;
+      busy(false);
+      renderTemplatesTab();
+      setType(state.type, true);
+      toast('Template saved');
+    } catch (err) { showError(err); }
+  });
+
+  $('#tDelete').addEventListener('click', async () => {
+    primeDrive();
+    const e = state.tplEditing;
+    if (!e || !e.id) return;
+    if (!(await ask('Delete the template "' + e.name + '"? Notes already written are not affected.', 'Delete'))) return;
+    busy(true, 'Deleting template…');
+    try {
+      state.allTemplates = state.allTemplates.filter(t => t.id !== e.id);
+      await writeAllTemplates();
+      state.tplEditing = null;
+      busy(false);
+      renderTemplatesTab();
+      setType(state.type, true);
+      toast('Template deleted');
+    } catch (err) { showError(err); }
+  });
+
+  $('#fSave').addEventListener('click', async () => {
+    primeDrive();
+    const vals = { OP_NOTE_FORMAT: $('#fOp').value, CLINIC_NOTE_FORMAT: $('#fClinic').value, ADMISSION_NOTE_FORMAT: $('#fAdmission').value, NOTE_RULES: $('#fRules').value, VOCABULARY: $('#fVocab').value };
+    const matches = findIdentifiers(Object.values(vals).join('\n'));
+    if (matches.length && !(await confirmIdentifiers(matches))) return;
+    busy(true, 'Saving…');
+    try {
+      Object.keys(vals).forEach(k => setSetting(k, vals[k]));
+      await writeSettings();
+      busy(false);
+      toast('Format and style saved');
+    } catch (err) { showError(err); }
+  });
+
+  $('#markReviewed').addEventListener('click', async () => {
+    primeDrive();
+    busy(true, 'Saving…');
+    try {
+      setSetting('TEMPLATES_REVIEWED', 'yes');
+      await writeSettings();
+      busy(false);
+      $('#reviewedWrap').classList.add('hidden');
+      const b = $('#banner');
+      [...b.children].forEach(c => { if (/starter defaults/.test(c.textContent)) c.remove(); });
+      b.classList.toggle('hidden', !b.children.length);
+      toast('Thanks. The reminder is gone');
+    } catch (err) { showError(err); }
+  });
+
 
   /* ================================================================ cases */
 
@@ -1090,6 +1301,18 @@
     if (state.inboxCurrent && state.inboxCurrent.status === 'new') markInbox('copied');
   });
   $('#inboxDone').addEventListener('click', () => markInbox('done'));
+  $('#inboxDelete').addEventListener('click', async () => {
+    const it = state.inboxCurrent;
+    if (!it) return;
+    if (!(await ask('Delete this note from your inbox? It stays in ' + (it.fromName || 'the sender') + '\'s own Voice Notes.', 'Delete'))) return;
+    try {
+      await api('inboxDelete', { id: it.id });
+      state.inboxCurrent = null;
+      $('#inboxItem').classList.add('hidden');
+      toast('Deleted from inbox');
+      loadInbox();
+    } catch (err) { showError(err); }
+  });
 
   /* ================================================================ usage (owner) */
 

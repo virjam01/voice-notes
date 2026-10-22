@@ -93,4 +93,16 @@ const STARTER_TEMPLATES = [
     defaults: '',
     checks: 'Plan with follow-up or discharge',
   },
+  {
+    id: 'admission-fracture', name: 'Admission: fracture / trauma', noteType: 'admission', active: 'yes',
+    sections: 'Presenting complaint; History of presenting complaint (mechanism, time of injury); Past medical and surgical history; Medications (including anticoagulants); Allergies; Social history and pre-morbid function; Examination (including neurovascular status and skin); Imaging; Impression; Plan',
+    defaults: '',
+    checks: 'Side; Mechanism and time of injury; Anticoagulants; Allergies; Pre-morbid mobility; Neurovascular status; Skin integrity / open injury; Imaging reviewed; Fasting status; VTE plan; Analgesia; Consent / theatre plan',
+  },
+  {
+    id: 'admission-elective', name: 'Admission: elective / pre-op', noteType: 'admission', active: 'yes',
+    sections: 'Planned procedure and side; Indication; Past medical and surgical history; Medications; Allergies; Social history and function; Examination; Investigations; Plan',
+    defaults: '',
+    checks: 'Procedure and side; Consent; Site marking; Allergies; Anticoagulants / withheld medications; Fasting; VTE plan',
+  },
 ];
